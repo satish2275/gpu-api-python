@@ -1,0 +1,154 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-api
+  namespace: default
+  labels:
+    app: gpu-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gpu-api
+  template:
+    metadata:
+      labels:
+        app: gpu-api
+    spec:
+      serviceAccountName: gpu-api-sa
+      containers:
+      - name: gpu-api
+        image: your-acr.azurecr.io/gpu-api:latest
+        ports:
+        - containerPort: 5000
+        env:
+        - name: AZURE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: azure-credentials
+              key: client-id
+        - name: AZURE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: azure-credentials
+              key: client-secret
+        - name: AZURE_TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: azure-credentials
+              key: tenant-id
+        - name: AZURE_SUBSCRIPTION_ID
+          valueFrom:
+            configMapKeyRef:
+              name: gpu-api-config
+              key: subscription-id
+        - name: AZURE_RESOURCE_GROUP
+          valueFrom:
+            configMapKeyRef:
+              name: gpu-api-config
+              key: resource-group
+        - name: AKS_CLUSTER_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: gpu-api-config
+              key: cluster-name
+        - name: GPU_NODEPOOL_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: gpu-api-config
+              key: gpu-nodepool-name
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gpu-api-service
+  namespace: default
+spec:
+  selector:
+    app: gpu-api
+  ports:
+  - port: 80
+    targetPort: 5000
+    protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-api-config
+  namespace: default
+data:
+  subscription-id: "your-subscription-id"
+  resource-group: "your-resource-group"
+  cluster-name: "your-aks-cluster"
+  gpu-nodepool-name: "gpupool"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: azure-credentials
+  namespace: default
+type: Opaque
+data:
+  client-id: <base64-encoded-client-id>
+  client-secret: <base64-encoded-client-secret>
+  tenant-id: <base64-encoded-tenant-id>
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gpu-api-sa
+  namespace: default
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gpu-api-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "jobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-api-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gpu-api-role
+subjects:
+- kind: ServiceAccount
+  name: gpu-api-sa
+  namespace: default
